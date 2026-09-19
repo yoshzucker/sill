@@ -51,10 +51,8 @@
 Rendered against the selected window, so `mode-line-window-selected-p' and
 anything else that asks about the window answer about that one.
 
-Nil means the mode line the frame would otherwise have drawn -- the default
-`mode-line-format' as it stood when `sill-mode' was turned on, which the
-mode then empties.  That is what makes turning this on a change of place
-rather than of content."
+Nil means the mode line the frame would otherwise have drawn, which is what
+makes turning this on a change of place rather than of content."
   :type 'sexp)
 
 (defcustom sill-face 'mode-line
@@ -70,9 +68,6 @@ So the rest of the row is painted here, and this is what paints it."
 
 (defconst sill--window-parameter 'sill-window
   "Frame parameter holding the window that frame's sill was last about.")
-
-(defvar sill--saved-default nil
-  "The default `mode-line-format' from before `sill-mode' emptied it.")
 
 ;; Defined at the foot of the file by `define-minor-mode', and read above it.
 (defvar sill-mode)
@@ -165,7 +160,7 @@ the window the reader came from."
 
 (defun sill--render (window)
   "Return the line to show about WINDOW, reaching the right edge."
-  (let ((format (or sill-format sill--saved-default)))
+  (let ((format (or sill-format (default-value 'mode-line-format))))
     (concat (format-mode-line format nil window (window-buffer window))
             ;; One space stretched to the edge, rather than as many spaces as
             ;; the width less what is already there.  Counting columns means
@@ -206,14 +201,11 @@ the window the reader came from."
 (defun sill--hide-mode-lines (frame)
   "Take the mode line off every window of FRAME but the sill's own.
 
-The default is already empty, which is what covers a window the moment it
-is born: a window split off another does not inherit its parameters, so
-anything done here would arrive a redisplay late and the new window would
-show a mode line and then lose it.
-
-This is for the rest -- a buffer that sets `mode-line-format' for itself
-keeps its line whatever the default says, and one window in four still
-drawing one is the arrangement at its worst."
+Every window, because the variable is left alone: emptying it would reach
+every buffer rather than every window, and a buffer is not what has a
+mode line here.  A new window is covered by `sill--adopt\=' at the moment
+it is made; this is for the ones already there, and for a buffer put into
+one of them afterwards."
   (dolist (window (window-list frame 'never))
     (unless (or (window-parameter window 'sill)
                 ;; Only when it differs.  Setting the parameter asks for a
@@ -290,7 +282,16 @@ thing to do.  So the hooks only ask, and the asking is one `run-at-time'."
 
 Both halves, because either alone is worse than neither: the windows keep
 their rows and the frame grows one, or the frame says nothing about the
-window being worked in."
+window being worked in.
+
+The windows lose theirs by a window parameter each, and the variable
+`mode-line-format\=' is not touched.  Emptying it would be shorter and is
+the obvious thing to try -- and it reaches every buffer, not every window.
+`evil-refresh-mode-line\=' then finds nil there, decides it is a list
+because nil is, and writes it back with `setq\=' into a variable that
+becomes buffer-local when set.  Every buffer visited while the mode was on
+keeps a mode line of its own that is nothing, and keeps it after the mode
+is off: the lines never come back, and what did it is nowhere near."
   :global t
   :group 'sill
   (if sill-mode
@@ -299,15 +300,6 @@ window being worked in."
         ;; has no mode line from the moment it exists.  A window parameter
         ;; can only be set on a window that is already there, and by then it
         ;; has been drawn once.
-        ;; Only if there is not one already.  Turning on a mode that is on
-        ;; runs this again -- a file re-evaluated, a `:config' read twice --
-        ;; and by then the default is the emptied one, so saving it again
-        ;; would save nothing over the only copy of what was there.  What
-        ;; that costs is not noticed until the mode is turned off and the
-        ;; mode lines do not come back.
-        (unless sill--saved-default
-          (setq sill--saved-default (default-value 'mode-line-format)))
-        (setq-default mode-line-format nil)
         (advice-add 'split-window :filter-return #'sill--adopt)
         (add-hook 'window-state-change-hook #'sill--schedule)
         (add-hook 'after-make-frame-functions #'sill--schedule)
@@ -331,8 +323,6 @@ window being worked in."
     (when sill--timer
       (cancel-timer sill--timer)
       (setq sill--timer nil))
-    (setq-default mode-line-format sill--saved-default)
-    (setq sill--saved-default nil)
     (sill--teardown)))
 
 (provide 'sill)

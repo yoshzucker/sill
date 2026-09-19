@@ -48,11 +48,14 @@ nothing deletes it (=no-delete-other-windows=), nothing displays into it
 leaves it alone because a side window is not part of the frame's main window
 tree.
 
-The per-window mode lines go through the =mode-line-format= window parameter
-rather than the variable, so a buffer that sets =mode-line-format= for itself
-loses its line like the rest.  One window in four still drawing one is the
-arrangement at its worst: the row is spent and the line it holds is about the
-wrong window.
+The per-window mode lines go through the =mode-line-format= window parameter,
+one per window, and the variable =mode-line-format= is not touched.  Emptying
+it is shorter and is the obvious thing to try; it reaches every buffer rather
+than every window.  =evil-refresh-mode-line= then finds nil there, decides it
+is a list because nil is one, and writes it back with =setq= -- into a
+variable that becomes buffer-local when set.  Every buffer visited while the
+mode was on keeps a mode line of its own that is nothing, and keeps it after
+the mode is off: the lines never come back, and what did it is nowhere near.
 
 * The alternative, and why not
 

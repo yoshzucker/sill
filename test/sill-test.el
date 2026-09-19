@@ -81,6 +81,39 @@ worst: the row is spent and the line it holds is about the wrong window."
                                    (sill-test--others)))))
         (kill-buffer buffer)))))
 
+(ert-deftest sill-test-the-variable-is-left-alone ()
+  "The windows lose their mode lines; the variable that holds one does not.
+
+Emptying `mode-line-format\=' is shorter and is the obvious thing to try.
+It reaches every buffer rather than every window, and `evil-refresh-mode-line\='
+then finds nil there, decides it is a list because nil is one, and writes
+it back with `setq\=' -- into a variable that becomes buffer-local when set.
+Every buffer visited while the mode was on then keeps a mode line of its
+own that is nothing, and keeps it after the mode is off.  The lines never
+come back and what did it is nowhere near.
+
+The second half of this is that failure, played out."
+  (sill-test--with-windows 1
+    (let ((before (default-value 'mode-line-format)))
+      (sill-mode 1)
+      (should (equal before (default-value 'mode-line-format)))
+      (sill-mode -1)
+      (should (equal before (default-value 'mode-line-format))))
+    ;; and a buffer that is refreshed the way evil refreshes one keeps
+    ;; nothing of its own
+    (let ((buffer (generate-new-buffer "refreshed")))
+      (unwind-protect
+          (progn
+            (sill-mode 1)
+            (with-current-buffer buffer
+              ;; `evil-refresh-mode-line', reduced to the two lines that bite
+              (when (listp mode-line-format)
+                (setq mode-line-format (delq 'a-tag mode-line-format)))
+              (should-not (and (local-variable-p 'mode-line-format)
+                               (null mode-line-format)))))
+        (sill-mode -1)
+        (kill-buffer buffer)))))
+
 (ert-deftest sill-test-a-new-window-never-shows-one ()
   "A window split off another has no mode line from the moment it exists.
 
@@ -90,14 +123,13 @@ and a buffer that keeps its own `mode-line-format' is drawn with it.  What
 that looks like is a line appearing on a fresh window and staying there
 until some other window is selected, which is a fault to anyone watching.
 
-Both halves are needed.  The default is empty, which covers the ordinary
-buffer; the split itself takes the line off the new window, which covers
-the buffer that insists."
+The split itself is where it has to happen, for the ordinary buffer and
+for the one that insists alike."
   (sill-test--with-windows 1
     (sill-mode 1)
-    ;; the ordinary buffer: nothing to draw, because the default is empty
+    ;; the ordinary buffer, taken in hand as the window is made
     (let ((new (split-window-below)))
-      (should (null (buffer-local-value 'mode-line-format (window-buffer new))))
+      (should (eq 'none (window-parameter new 'mode-line-format)))
       (should (= (window-total-height new) (window-body-height new))))
     ;; and one that keeps its own, split before any update can run
     (let ((buffer (generate-new-buffer "insistent")))
@@ -129,53 +161,6 @@ line."
         (let ((new (split-window-below)))
           (should-not (eq 'none (window-parameter new 'mode-line-format))))
       (advice-remove 'split-window #'sill--adopt))))
-
-(ert-deftest sill-test-the-format-survives-the-emptying ()
-  "What the sill draws is the line the frame would have drawn, and emptying
-the default is how the windows stop drawing it -- so the sill has to have
-kept a copy, or it empties itself along with them."
-  (sill-test--with-windows 1
-    (let ((sill-format nil)
-          (before (default-value 'mode-line-format)))
-      (unwind-protect
-          (progn
-      (setq-default mode-line-format '("the line"))
-      (sill-mode 1)
-      (should (equal '("the line") sill--saved-default))
-      (should (null (default-value 'mode-line-format)))
-      (cl-letf (((symbol-function 'format-mode-line)
-                 (lambda (format &rest _) (format "%S" format))))
-        (should (string-prefix-p "(\"the line\")"
-                                 (sill--render (frame-first-window)))))
-      (sill-mode -1)
-      (should (equal '("the line") (default-value 'mode-line-format))))
-        (setq-default mode-line-format before)))))
-
-(ert-deftest sill-test-turning-it-on-twice-keeps-the-only-copy ()
-  "Turning on a mode that is on must not lose what was there before it.
-
-It happens without anyone meaning it -- a file re-evaluated, a `:config'
-read a second time -- and by then the default `mode-line-format' is the
-emptied one.  Saving that over the copy leaves no copy, which is not
-noticed at all until the mode is turned off and the mode lines do not come
-back."
-  (sill-test--with-windows 1
-    (let ((before (default-value 'mode-line-format)))
-      (unwind-protect
-          (progn
-            (setq-default mode-line-format '("the real line"))
-            (sill-mode 1)
-            (sill-mode 1)
-            (should (equal '("the real line") sill--saved-default))
-            (sill-mode -1)
-            (should (equal '("the real line") (default-value 'mode-line-format)))
-            ;; and again, so that the copy is not kept from the time before
-            (setq-default mode-line-format '("a different line"))
-            (sill-mode 1)
-            (sill-mode -1)
-            (should (equal '("a different line")
-                           (default-value 'mode-line-format))))
-        (setq-default mode-line-format before)))))
 
 (ert-deftest sill-test-turning-it-off-puts-everything-back ()
   "A mode that cannot be turned off is a decision, not a setting."
