@@ -291,6 +291,26 @@ clears the frame."
       ;; nothing displays into it either
       (should (window-dedicated-p sill)))))
 
+(ert-deftest sill-test-startup-waits-for-the-frame ()
+  "Switched on while Emacs is still loading, it makes no window yet.
+
+There is no finished frame to make one into: the tab bar may not be on it,
+and whatever configures the display later has still to change its shape.
+A row taken from a frame in that state is a row taken from a guess, and
+what comes of it is a frame drawn to halfway -- no tab bar, no echo area,
+a minibuffer that never appears."
+  (sill-test--with-windows 1
+    (let ((after-init-time nil)
+          (emacs-startup-hook nil))
+      (sill-mode 1)
+      (should-not (sill-test--window))
+      (should (memq #'sill--update emacs-startup-hook))
+      ;; and when the loading is over, it draws
+      (run-hooks 'emacs-startup-hook)
+      (should (sill-test--window))
+      (sill-mode -1)
+      (should-not (memq #'sill--update emacs-startup-hook)))))
+
 (ert-deftest sill-test-the-hooks-only-ask ()
   "Nothing that changes windows runs from a hook that redisplay runs.
 

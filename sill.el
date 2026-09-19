@@ -304,10 +304,23 @@ window being worked in."
         (advice-add 'split-window :filter-return #'sill--adopt)
         (add-hook 'window-state-change-hook #'sill--schedule)
         (add-hook 'after-make-frame-functions #'sill--schedule)
-        (sill--update))
+        ;; A window is made into a frame, and during startup there is not a
+        ;; finished frame to make one into: the tab bar may not be on it
+        ;; yet, and whatever configures the display after this file is read
+        ;; has still to change its shape.  A row taken from a frame in that
+        ;; state is a row taken from a guess, and what comes of it is a
+        ;; frame drawn to halfway.
+        ;;
+        ;; So when this is switched on by a file being loaded, the first
+        ;; draw waits for the end of the loading.  Switched on by hand there
+        ;; is nothing to wait for.
+        (if after-init-time
+            (sill--update)
+          (add-hook 'emacs-startup-hook #'sill--update)))
     (advice-remove 'split-window #'sill--adopt)
     (remove-hook 'window-state-change-hook #'sill--schedule)
     (remove-hook 'after-make-frame-functions #'sill--schedule)
+    (remove-hook 'emacs-startup-hook #'sill--update)
     (when sill--timer
       (cancel-timer sill--timer)
       (setq sill--timer nil))
