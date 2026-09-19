@@ -299,7 +299,14 @@ window being worked in."
         ;; has no mode line from the moment it exists.  A window parameter
         ;; can only be set on a window that is already there, and by then it
         ;; has been drawn once.
-        (setq sill--saved-default (default-value 'mode-line-format))
+        ;; Only if there is not one already.  Turning on a mode that is on
+        ;; runs this again -- a file re-evaluated, a `:config' read twice --
+        ;; and by then the default is the emptied one, so saving it again
+        ;; would save nothing over the only copy of what was there.  What
+        ;; that costs is not noticed until the mode is turned off and the
+        ;; mode lines do not come back.
+        (unless sill--saved-default
+          (setq sill--saved-default (default-value 'mode-line-format)))
         (setq-default mode-line-format nil)
         (advice-add 'split-window :filter-return #'sill--adopt)
         (add-hook 'window-state-change-hook #'sill--schedule)
@@ -325,6 +332,7 @@ window being worked in."
       (cancel-timer sill--timer)
       (setq sill--timer nil))
     (setq-default mode-line-format sill--saved-default)
+    (setq sill--saved-default nil)
     (sill--teardown)))
 
 (provide 'sill)

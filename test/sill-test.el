@@ -151,6 +151,32 @@ kept a copy, or it empties itself along with them."
       (should (equal '("the line") (default-value 'mode-line-format))))
         (setq-default mode-line-format before)))))
 
+(ert-deftest sill-test-turning-it-on-twice-keeps-the-only-copy ()
+  "Turning on a mode that is on must not lose what was there before it.
+
+It happens without anyone meaning it -- a file re-evaluated, a `:config'
+read a second time -- and by then the default `mode-line-format' is the
+emptied one.  Saving that over the copy leaves no copy, which is not
+noticed at all until the mode is turned off and the mode lines do not come
+back."
+  (sill-test--with-windows 1
+    (let ((before (default-value 'mode-line-format)))
+      (unwind-protect
+          (progn
+            (setq-default mode-line-format '("the real line"))
+            (sill-mode 1)
+            (sill-mode 1)
+            (should (equal '("the real line") sill--saved-default))
+            (sill-mode -1)
+            (should (equal '("the real line") (default-value 'mode-line-format)))
+            ;; and again, so that the copy is not kept from the time before
+            (setq-default mode-line-format '("a different line"))
+            (sill-mode 1)
+            (sill-mode -1)
+            (should (equal '("a different line")
+                           (default-value 'mode-line-format))))
+        (setq-default mode-line-format before)))))
+
 (ert-deftest sill-test-turning-it-off-puts-everything-back ()
   "A mode that cannot be turned off is a decision, not a setting."
   (sill-test--with-windows 3
