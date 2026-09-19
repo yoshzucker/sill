@@ -1,0 +1,80 @@
+#+TITLE: sill
+
+One mode line at the foot of the frame, and none in the windows.
+
+* Why
+
+A mode line costs one row of every window that has one.  Four windows, four
+rows, and the same answer four times over -- because only one of those lines
+is about the window being worked in, and the other three describe places the
+eye is not.
+
+So =sill-mode= draws one, on a row of its own at the foot of the frame, about
+whichever window is selected; and takes the per-window ones away.  With four
+windows that is three rows back, with eight it is seven.  The row it costs is
+the same row however many windows there are, which is the whole of the idea.
+
+* Use
+
+#+begin_src emacs-lisp
+(use-package sill
+  :config
+  (sill-mode 1))
+#+end_src
+
+What it draws is not decided by the package.  =sill-format= is a mode-line
+format like any other and is rendered against the selected window, so whatever
+a configuration had already built for =mode-line-format= arrives unchanged --
+faces, glyphs and all.
+
+#+begin_src emacs-lisp
+(setq sill-format your-own-mode-line-format)
+#+end_src
+
+Left nil, it uses the mode line the frame would otherwise have drawn, which is
+what makes turning it on a change of place rather than of content.
+
+=sill-face= fills the rest of the row out to the frame's width.  Emacs fills
+out the row it draws for a mode line itself; a window is not a mode line, so
+past the text is the default background -- which is the one place a line
+designed as a band stops looking like one.
+
+* What the row is
+
+An ordinary window, at the frame's bottom side.  The reason it is not felt as
+one is a handful of window parameters: nothing selects it (=no-other-window=),
+nothing deletes it (=no-delete-other-windows=), nothing displays into it
+(dedicated), and nothing resizes it (=window-preserve-size=).  =balance-windows=
+leaves it alone because a side window is not part of the frame's main window
+tree.
+
+The per-window mode lines go through the =mode-line-format= window parameter
+rather than the variable, so a buffer that sets =mode-line-format= for itself
+loses its line like the rest.  One window in four still drawing one is the
+arrangement at its worst: the row is spent and the line it holds is about the
+wrong window.
+
+* The alternative, and why not
+
+The echo area costs no row at all -- it is already there at the foot of every
+frame -- and loses the line to every message and every minibuffer prompt.  Not
+only while a prompt is open: saving a file, a clock starting, any =message= at
+all.  A line that is usually there is a line nobody comes to rely on.
+
+* Testing
+
+#+begin_src sh
+emacs --batch -Q -L . -l test/sill-test.el -f ert-run-tests-batch-and-exit
+#+end_src
+
+Batch has no redisplay, so =format-mode-line= answers with the empty string
+there.  What that function does is Emacs's business; what is tested is
+everything around it -- which window it is asked about, and what becomes of the
+answer.
+
+* Prior art
+
+=common-header-mode-line.el= does this and a good deal more: header lines as
+well as mode lines, per-window as well as per-frame, and a choice of how the
+row is made.  This does the one thing, which is why it is a fraction of the
+size.  If you want the rest, use that.
