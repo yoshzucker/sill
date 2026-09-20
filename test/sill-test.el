@@ -13,6 +13,7 @@
 
 ;;; Code:
 
+(require 'cl-lib)
 (require 'ert)
 (require 'seq)
 (require 'sill)
@@ -29,6 +30,20 @@
            ,@body)
        (when sill-mode (sill-mode -1))
        (delete-other-windows))))
+
+(defmacro sill-test--as-child-frame (&rest body)
+  "Run BODY with the selected frame answering that it has a parent.
+Batch has no graphical display and so cannot make a real child frame, and
+that one answer is all the code reads to know one."
+  (declare (indent 0))
+  `(let* ((frame (selected-frame))
+          (real (symbol-function 'frame-parameter)))
+     (cl-letf (((symbol-function 'frame-parameter)
+                (lambda (f p)
+                  (if (and (eq f frame) (eq p 'parent-frame))
+                      frame
+                    (funcall real f p)))))
+       ,@body)))
 
 (defun sill-test--window ()
   "Return the sill's window, or nil."
@@ -347,6 +362,40 @@ in the command loop."
       ;; the timer is what makes it
       (sill--update)
       (should (= before (length (window-list nil 'never)))))))
+
+(ert-deftest sill-test-a-popup-frame-is-left-alone ()
+  "Somebody else's child frame keeps its own display.
+
+A completion popup, a tooltip, a posframe: the package that made the frame
+sized it and placed it, and a sill there is a row taken out of that to name
+the buffer the popup happens to be showing.  Its windows keep their mode
+lines as well -- a frame that gets no sill must not have its mode lines
+taken away, or it ends with neither.
+
+Batch cannot make a real child frame, so the frame under test is asked to
+say it has a parent; that answer is the whole of what the code reads."
+  (sill-test--with-windows 2
+    (sill-mode 1)
+    (should (sill-test--window))        ; an ordinary frame does get one
+    (sill-mode -1)
+    (sill-test--as-child-frame
+     (sill-mode 1)
+     (sill--update)
+     (should-not (sill-test--window))
+     (should (equal '(nil nil)
+                    (mapcar (lambda (w) (window-parameter w 'mode-line-format))
+                            (window-list nil 'never)))))))
+
+(ert-deftest sill-test-a-split-in-a-popup-frame-keeps-its-row ()
+  "The advice that catches a new window asks the same question.
+
+`sill--adopt' runs on every split there is, so it reaches splits made inside
+somebody else's frame too."
+  (sill-test--with-windows 1
+    (sill-mode 1)
+    (sill-test--as-child-frame
+     (let ((window (split-window-below)))
+       (should-not (window-parameter window 'mode-line-format))))))
 
 (provide 'sill-test)
 

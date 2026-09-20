@@ -228,7 +228,9 @@ selected.
 
 Here instead, where it is one `set-window-parameter' in the command that
 made the window, and never a frame late."
-  (when (and sill-mode (window-live-p window))
+  (when (and sill-mode
+             (window-live-p window)
+             (sill--frame-p (window-frame window)))
     (set-window-parameter window 'mode-line-format 'none))
   window)
 
@@ -256,11 +258,24 @@ thing to do.  So the hooks only ask, and the asking is one `run-at-time'."
   (unless sill--timer
     (setq sill--timer (run-at-time 0 nil #'sill--update))))
 
+(defun sill--frame-p (frame)
+  "Non-nil when FRAME is one a sill belongs on.
+
+A child frame is somebody else\='s popup -- a completion list, a tooltip,
+a posframe -- sized and placed by the package that made it, often only a
+few lines tall.  A sill there is a row taken out of that package\='s own
+display to say what buffer its popup is showing, which is never the
+question being asked.  Their windows keep their mode lines too: a frame
+that gets no sill must not have its mode lines taken away."
+  (and (frame-live-p frame)
+       (not (frame-parameter frame 'parent-frame))
+       (not (frame-parameter frame 'tooltip))))
+
 (defun sill--update ()
   "Bring every frame's sill up to date."
   (setq sill--timer nil)
   (dolist (frame (frame-list))
-    (when (frame-live-p frame)
+    (when (sill--frame-p frame)
       (sill--hide-mode-lines frame)
       (sill--draw frame))))
 
