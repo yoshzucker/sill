@@ -57,6 +57,29 @@ variable that becomes buffer-local when set.  Every buffer visited while the
 mode was on keeps a mode line of its own that is nothing, and keeps it after
 the mode is off: the lines never come back, and what did it is nowhere near.
 
+* Giving the bottom back
+
+The bottom side of a frame is one place, and the row takes it.  So does
+anything else displayed there -- =display-buffer-in-side-window= with
+=(side . bottom)= -- and a transient menu is the common case.  Slots do not
+divide the place: side windows along the top and bottom are laid out from
+left to right by increasing slot, so a second slot puts the other window
+beside the row rather than above it.
+
+The row gives way.  When something asks for the bottom side it is taken
+down, and it comes back when that window is gone.  Nothing has to be
+configured for this.
+
+That is the right way round, and not only because the row is the one that
+can be rebuilt.  A menu is put at the bottom of the frame so that it reads
+as part of the echo area rather than as a window: below everything, against
+the minibuffer, with point still blinking where the reader left it.  Moved
+up a row it stops looking like the thing it is.  A mode line, meanwhile,
+describes the window being worked in, and while a menu is up, none is.
+
+So for as long as the other window is there, the frame has no mode line at
+all.
+
 * The alternative, and why not
 
 The echo area costs no row at all -- it is already there at the foot of every

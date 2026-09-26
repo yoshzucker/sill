@@ -158,10 +158,58 @@ the window the reader came from."
       (window-preserve-size window nil t))
     window))
 
+(defun sill--without-min-width (spec)
+  "Return display SPEC with any `min-width\=' taken out, or nil if that was all.
+
+A display property is either one specification or a list of them, and the
+two are told apart the way the display engine tells them apart: a list
+whose first element is itself a list is a list of specifications."
+  (cond
+   ((not (consp spec)) spec)
+   ((eq (car spec) 'min-width) nil)
+   ((consp (car spec))
+    (delq nil (mapcar #'sill--without-min-width spec)))
+   (t spec)))
+
+(defun sill--drop-min-width (string)
+  "Take the `min-width\=' display specifications out of STRING.  Return it.
+
+Emacs asks for the width of a mode-line field twice.  `mode-line-position\='
+is `(6 (:propertize ... display (min-width (6.0))))\=': the leading 6 is the
+old padding, which pads to *at least* six columns, and the `min-width\=' is
+for the display engine.  On a mode line the engine stretches the run to
+six first, so the padding then adds nothing and the field is six wide.
+
+`format-mode-line\=' does not honour `min-width\=' -- it is a display
+property and there is no display here -- so it obeys the padding instead
+and returns the six columns as literal spaces, carrying the property
+along.  Put in a buffer, where there is a display again, both apply: the
+run is stretched to six and the literal padding follows it.  The field is
+wider than it should be, and the wrong width by a different amount as its
+contents change -- a line number going from 9 to 10 loses a space it had
+been padded with while the minimum holds, and everything to its right
+steps one column left.
+
+The padding is the same intent already carried out, so what goes is the
+property.  A format that asks for a width only through `min-width\=' and
+never pads loses it, and is drawn as wide as its text."
+  (let ((i 0) (n (length string)))
+    (while (< i n)
+      (let* ((next (or (next-single-property-change i 'display string) n))
+             (spec (get-text-property i 'display string))
+             (kept (sill--without-min-width spec)))
+        (unless (equal spec kept)
+          (if kept
+              (put-text-property i next 'display kept string)
+            (remove-text-properties i next '(display nil) string)))
+        (setq i next))))
+  string)
+
 (defun sill--render (window)
   "Return the line to show about WINDOW, reaching the right edge."
   (let ((format (or sill-format (default-value 'mode-line-format))))
-    (concat (format-mode-line format nil window (window-buffer window))
+    (concat (sill--drop-min-width
+             (format-mode-line format nil window (window-buffer window)))
             ;; One space stretched to the edge, rather than as many spaces as
             ;; the width less what is already there.  Counting columns means
             ;; trusting `string-width' about every glyph in the line, and a
@@ -197,6 +245,44 @@ the window the reader came from."
       ;; row away and leave it blank.
       (set-window-point window (point-min))
       (set-window-start window (point-min)))))
+
+(defun sill--bottom-taken-p (frame)
+  "Non-nil when something other than the sill holds FRAME\='s bottom side."
+  (seq-find (lambda (window)
+              (and (eq (window-parameter window 'window-side) 'bottom)
+                   (not (window-parameter window 'sill))))
+            (window-list frame 'never)))
+
+(defun sill--withdraw (frame)
+  "Take FRAME\='s row down, if it has one."
+  (when-let ((window (sill--window-of frame)))
+    (set-window-parameter window 'no-delete-other-windows nil)
+    (delete-window window)))
+
+(defun sill--yield (_buffer alist)
+  "Leave the frame\='s bottom side to whatever has asked for it.
+
+Advice on `display-buffer-in-side-window\='.  The bottom side of a frame is
+one place and the row takes it, and slots do not divide it: side windows
+there are laid out left to right by slot, so a second slot puts the other
+window beside the row rather than above it.
+
+So the row gives way, and comes back when the other window is gone.  That
+is the right way round.  What asks for the bottom side is a menu or a
+prompt -- transient\='s, mostly -- and it is placed there to read as part
+of the echo area rather than as a window: below everything, against the
+minibuffer, with point still blinking where the reader left it.  Put
+anywhere else it stops looking like the thing it is.  Meanwhile a mode
+line describes a window being worked in, and for as long as the menu is
+up, none is.
+
+Before the display rather than after it, because afterwards the slot the
+row is sitting in is the slot that was asked for, and the other buffer
+has already arrived on top of it."
+  (when (and sill-mode (eq (cdr (assq 'side alist)) 'bottom))
+    (let ((frame (selected-frame)))
+      (when (sill--frame-p frame)
+        (sill--withdraw frame)))))
 
 (defun sill--hide-mode-lines (frame)
   "Take the mode line off every window of FRAME but the sill's own.
@@ -277,6 +363,40 @@ that gets no sill must not have its mode lines taken away."
   (dolist (frame (frame-list))
     (when (sill--frame-p frame)
       (sill--hide-mode-lines frame)
+      ;; Not merely refusing to draw: a row made before the other window
+      ;; arrived is still there to take down.
+      (if (sill--bottom-taken-p frame)
+          (sill--withdraw frame)
+        (sill--draw frame)))))
+
+(defun sill--refresh ()
+  "Redraw the selected frame\='s row, if it has one.
+
+The row shows a mode line, and a mode line is redrawn whenever the screen
+is.  The hooks that report window changes do not report a buffer being
+modified or point moving -- `window-state-change-hook\=' says as much: a
+window added, deleted, (de-)selected, or changed in buffer or size.  A row
+driven by those alone shows `--\=' for a buffer that has been typed into
+and the line number of wherever the cursor last stopped changing windows.
+That is wrong rather than merely old, and a mode line that lies is worse
+than no mode line, which is the whole reason this one is drawn.
+
+A command is the coarsest occasion that still catches it.
+`pre-redisplay-functions\=' is the exact moment and the wrong instrument:
+it runs once per window per redisplay rather than once per command, and
+this draw writes into a buffer that is on the screen -- which is how one
+redisplay becomes the next.  Narrower hooks each cover a part:
+`first-change-hook\=' would catch a buffer becoming modified but not its
+being saved, and neither would say where point is.
+
+What a command does not catch is what changes without one: a clock in
+`global-mode-string\=', a process filter writing into the line.  Those
+arrive with the next command instead of on their own.
+
+Only a row that exists is drawn.  Making one belongs to `sill--update\=',
+and while another window holds the bottom side there is to be none."
+  (let ((frame (selected-frame)))
+    (when (and (sill--frame-p frame) (sill--window-of frame))
       (sill--draw frame))))
 
 (defun sill--teardown ()
@@ -316,7 +436,9 @@ is off: the lines never come back, and what did it is nowhere near."
         ;; can only be set on a window that is already there, and by then it
         ;; has been drawn once.
         (advice-add 'split-window :filter-return #'sill--adopt)
+        (advice-add 'display-buffer-in-side-window :before #'sill--yield)
         (add-hook 'window-state-change-hook #'sill--schedule)
+        (add-hook 'post-command-hook #'sill--refresh)
         (add-hook 'after-make-frame-functions #'sill--schedule)
         ;; A window is made into a frame, and during startup there is not a
         ;; finished frame to make one into: the tab bar may not be on it
@@ -332,7 +454,9 @@ is off: the lines never come back, and what did it is nowhere near."
             (sill--update)
           (add-hook 'emacs-startup-hook #'sill--update)))
     (advice-remove 'split-window #'sill--adopt)
+    (advice-remove 'display-buffer-in-side-window #'sill--yield)
     (remove-hook 'window-state-change-hook #'sill--schedule)
+    (remove-hook 'post-command-hook #'sill--refresh)
     (remove-hook 'after-make-frame-functions #'sill--schedule)
     (remove-hook 'emacs-startup-hook #'sill--update)
     (when sill--timer

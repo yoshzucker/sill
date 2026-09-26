@@ -177,6 +177,154 @@ line."
           (should-not (eq 'none (window-parameter new 'mode-line-format))))
       (advice-remove 'split-window #'sill--adopt))))
 
+(ert-deftest sill-test-a-width-asked-for-twice-is-given-once ()
+  "`min-width\=' goes, because the padding it asked for is already there.
+
+`format-mode-line\=' does not honour the property and pads with spaces
+instead, then hands the property on.  In a buffer both apply, and the
+field is its padding plus its minimum -- wider than a mode line, and
+wrong by a different amount as its contents change."
+  (let ((s (copy-sequence "All L9   ")))
+    (put-text-property 0 3 'display '(min-width (5.0)) s)
+    (put-text-property 3 6 'display '(min-width (6.0)) s)
+    (sill--drop-min-width s)
+    (should (equal (substring-no-properties s) "All L9   "))
+    (should-not (get-text-property 0 'display s))
+    (should-not (get-text-property 3 'display s))))
+
+(ert-deftest sill-test-the-drawn-line-has-the-width-taken-out ()
+  "The line that is drawn goes through the stripping, not merely the
+function that would do it.
+
+`format-mode-line\=' answers with the empty string in batch, so what it
+returns is stood in for here: the question is whether `sill--render\='
+passes its answer on untouched."
+  (sill-test--with-windows 1
+    (cl-letf (((symbol-function 'format-mode-line)
+               (lambda (&rest _)
+                 (let ((line (copy-sequence "All L9   ")))
+                   (put-text-property 3 6 'display '(min-width (6.0)) line)
+                   line))))
+      (let ((line (sill--render (frame-first-window))))
+        (should (string-prefix-p "All L9   " (substring-no-properties line)))
+        (should-not (get-text-property 3 'display line))))))
+
+(ert-deftest sill-test-only-the-width-goes ()
+  "Everything else a display property carries stays, and so does the rest.
+
+The row\='s own filler is a `display\=' property -- a space stretched to the
+right edge -- and a line that lost it would stop at its last word."
+  ;; a specification that is not min-width
+  (let ((s (copy-sequence " ")))
+    (put-text-property 0 1 'display '(space :align-to right) s)
+    (sill--drop-min-width s)
+    (should (equal (get-text-property 0 'display s) '(space :align-to right))))
+  ;; min-width among others: that one goes, the others stay
+  (let ((s (copy-sequence "x")))
+    (put-text-property 0 1 'display '((min-width (6.0)) (raise 0.2)) s)
+    (sill--drop-min-width s)
+    (should (equal (get-text-property 0 'display s) '((raise 0.2)))))
+  ;; and properties that are not `display' are not touched
+  (let ((s (copy-sequence "x")))
+    (put-text-property 0 1 'display '(min-width (6.0)) s)
+    (put-text-property 0 1 'face 'mode-line s)
+    (sill--drop-min-width s)
+    (should (eq (get-text-property 0 'face s) 'mode-line))))
+
+(ert-deftest sill-test-the-bottom-goes-to-whoever-asks-for-it ()
+  "A side window asking for the bottom finds it free.
+
+The bottom side of a frame is one place, and slots do not divide it: side
+windows there are laid out left to right, so a second slot would put the
+other window beside the row.  What asks is a menu or a prompt, placed
+there to read as part of the echo area, and the row is what has to move."
+  (sill-test--with-windows 1
+    (sill-mode 1)
+    (sill--update)
+    (should (sill-test--window))
+    (let ((buffer (generate-new-buffer "asker")))
+      (unwind-protect
+          (let ((window (display-buffer-in-side-window
+                         buffer '((side . bottom) (slot . 0)))))
+            (should (window-live-p window))
+            (should (eq (window-buffer window) buffer))
+            (should-not (sill-test--window)))
+        (kill-buffer buffer)))))
+
+(ert-deftest sill-test-the-row-stays-down-until-the-bottom-is-free ()
+  "An update while the bottom is taken does not put the row back.
+
+The update runs from a timer on every window change, and the window that
+took the bottom is itself such a change.  Without this the row would be
+remade one tick after giving way, into the place it had just left."
+  (sill-test--with-windows 1
+    (sill-mode 1)
+    (let ((buffer (generate-new-buffer "asker")))
+      (unwind-protect
+          (let ((window (display-buffer-in-side-window
+                         buffer '((side . bottom) (slot . 0)))))
+            (sill--update)
+            (should-not (sill-test--window))
+            ;; and back again once the other window is gone
+            (delete-window window)
+            (sill--update)
+            (should (sill-test--window)))
+        (kill-buffer buffer)))))
+
+(ert-deftest sill-test-the-row-is-redrawn-after-every-command ()
+  "Typing and moving are not window changes, and the row follows them anyway.
+
+`window-state-change-hook\=' reports a window added, deleted, (de-)selected
+or changed in buffer or size -- not a buffer modified, not point moved.
+Left to it the row says `--\=' for a buffer that has been typed into."
+  (sill-test--with-windows 1
+    (sill-mode 1)
+    (sill--update)
+    (should (sill-test--window))
+    (let ((drawn 0))
+      (cl-letf* ((real (symbol-function 'sill--draw))
+                 ((symbol-function 'sill--draw)
+                  (lambda (frame) (setq drawn (1+ drawn)) (funcall real frame))))
+        (run-hooks 'post-command-hook)
+        (should (= drawn 1))))))
+
+(ert-deftest sill-test-a-command-does-not-put-the-row-back ()
+  "The redraw draws; it does not build.
+
+While another window holds the bottom side there is to be no row, and a
+command is the most frequent thing there is: a redraw that made one would
+undo the yielding on the first keystroke after it."
+  (sill-test--with-windows 1
+    (sill-mode 1)
+    (let ((buffer (generate-new-buffer "asker")))
+      (unwind-protect
+          (progn
+            (display-buffer-in-side-window buffer '((side . bottom) (slot . 0)))
+            (should-not (sill-test--window))
+            (run-hooks 'post-command-hook)
+            (should-not (sill-test--window)))
+        (kill-buffer buffer)))))
+
+(ert-deftest sill-test-turning-it-off-lets-go-of-the-command-loop ()
+  "A mode that is off is not called after every command."
+  (sill-test--with-windows 1
+    (sill-mode 1)
+    (should (memq #'sill--refresh post-command-hook))
+    (sill-mode -1)
+    (should-not (memq #'sill--refresh post-command-hook))))
+
+(ert-deftest sill-test-turning-it-off-lets-go-of-the-bottom ()
+  "A mode that is off leaves `display-buffer-in-side-window' alone.
+
+Left on, it would take down a row that is not there, on behalf of a mode
+that is not running -- and it is advice on a function every package that
+makes a side window goes through."
+  (sill-test--with-windows 1
+    (sill-mode 1)
+    (should (advice-member-p #'sill--yield 'display-buffer-in-side-window))
+    (sill-mode -1)
+    (should-not (advice-member-p #'sill--yield 'display-buffer-in-side-window))))
+
 (ert-deftest sill-test-turning-it-off-puts-everything-back ()
   "A mode that cannot be turned off is a decision, not a setting."
   (sill-test--with-windows 3
